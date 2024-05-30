@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>NTP Time Sync</title>
+    <link rel="stylesheet" href="main.css" />
+  </head>
+  <body>
+    <button onclick="startSync()">Start Sync</button>
+    <button onclick="toggleMute()">Mute</button>
+    <p id="status">Waiting for NTP time...</p>
+    <p id="startTime">Desired Start Time:</p>
+    <p id="countdown">Countdown to Play:</p>
+    <p id="playingStatus">Playing Status:</p>
+
+    <script>
+      // Specify the desired start time in Eastern Time
+      const desiredStartTime = new Date('2024-05-29T16:25:00-04:00'); // 4:01 PM Eastern Time
+      function toggleMute() {
+        const audio = document.getElementById('track');
+        audio.muted = !audio.muted;
+        document.getElementById('playingStatus').innerHTML = audio.muted
+          ? 'Playing Status: Muted'
+          : 'Playing Status: Playing';
+      }
+      async function startSync() {
+        const ntpTime = await getNTPTime();
+        if (ntpTime) {
+          document.getElementById(
+            'status'
+          ).innerHTML = `NTP Time (UTC): ${ntpTime.toISOString()}`;
+          document.getElementById(
+            'startTime'
+          ).innerHTML = `Desired Start Time: ${desiredStartTime.toISOString()}`;
+          synchronizeTracks(ntpTime);
+        } else {
+          document.getElementById('status').innerHTML =
+            'Failed to retrieve NTP time.';
+        }
+      }
+
+      async function getNTPTime() {
+        try {
+          const response = await fetch(
+            'https://worldtimeapi.org/api/timezone/Etc/UTC'
+          );
+          const data = await response.json();
+          return new Date(data.utc_datetime);
+        } catch (error) {
+          console.error('Error fetching NTP time:', error);
+          return null;
+        }
+      }
+
+      function synchronizeTracks(ntpTime) {
+        // Convert the desired start time to UTC
+        const desiredStartTimeUTC = new Date(desiredStartTime.toISOString());
+
+        const timeToStart = desiredStartTimeUTC - ntpTime;
+
+        if (timeToStart > 0) {
+          // Wait until the desired start time
+          const countdownInterval = setInterval(() => {
+            const timeRemaining = desiredStartTimeUTC - new Date();
+            if (timeRemaining <= 0) {
+              clearInterval(countdownInterval);
+              playTrack(0);
+            } else {
+              document.getElementById(
+                'countdown'
+              ).innerHTML = `Countdown to Play: ${
+                timeRemaining / 1000
+              } seconds`;
+            }
+          }, 1000);
+
+          setTimeout(() => {
+            playTrack(0);
+          }, timeToStart);
+        } else {
+          // If the desired start time has already passed, calculate the offset
+          const offset = Math.abs(timeToStart);
+          playTrack(offset / 1000); // Convert milliseconds to seconds
+        }
+
+        console.log(
+          `Syncing tracks to start at ${desiredStartTime.toISOString()} with an offset of ${timeToStart} milliseconds`
+        );
+      }
+
+      function playTrack(offset) {
+        const audio = document.getElementById('track');
+        audio.currentTime = offset; // Set the playback position
+        audio.play();
+        document.getElementById('playingStatus').innerHTML =
+          'Playing Status: Playing';
+      }
+    </script>
+
+    <!-- Example audio track for synchronization -->
+    <audio
+      id="track"
+      src="Los_Lonely_Boys2013-11-15s01t08.mp3"
+      preload="auto"
+    ></audio>
+  </body>
+</html>

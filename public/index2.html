@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>NTP Time Sync</title>
+    <link rel="stylesheet" href="main.css" />
+  </head>
+  <body>
+    <button onclick="startSync()">Start Sync</button>
+    <button onclick="toggleMute()">Mute</button>
+    <p id="status">Waiting for WS Connection...</p>
+    <p id="startTime">Desired Start Time: Not Set</p>
+    <p id="countdown">Countdown to Play: Not Started</p>
+    <p id="playingStatus">Playing Status: Not Playing</p>
+
+    <script>
+      const statusElement = document.getElementById('status');
+      const startTimeElement = document.getElementById('startTime');
+      const countdownElement = document.getElementById('countdown');
+      const playingStatusElement = document.getElementById('playingStatus');
+      const audioElement = document.getElementById('track');
+      const ws = new WebSocket('wss://dev.nicholasjosephsmith.com');
+      let startTime;
+      let serverTimeOffset;
+
+      function toggleMute() {
+        audioElement.muted = !audioElement.muted;
+        playingStatusElement.innerHTML = audioElement.muted
+          ? 'Playing Status: Muted'
+          : 'Playing Status: Playing';
+      }
+
+      ws.onopen = () => {
+        console.log('Connected to the server');
+        statusElement.innerHTML = 'Status: Connected to Server';
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.action === 'startTime') {
+          startTime = new Date(data.startTime);
+          startTimeElement.innerHTML = `Desired Start Time: ${startTime}`;
+          const clientTime = Date.now();
+          serverTimeOffset = clientTime - data.serverTime;
+          synchronizePlayback();
+        }
+      };
+
+      const synchronizePlayback = () => {
+        const now = new Date();
+        const adjustedNow = new Date(now.getTime() - serverTimeOffset);
+        if (startTime <= adjustedNow) {
+          const elapsedTime = (adjustedNow - startTime) / 1000;
+          audioElement.currentTime = elapsedTime;
+          audioElement.play();
+          playingStatusElement.innerHTML = 'Playing Status: Playing';
+        } else {
+          const delay = startTime - adjustedNow;
+          playingStatusElement.innerHTML = 'Playing Status: Waiting to Play';
+          updateCountdown(delay);
+          setTimeout(() => {
+            audioElement.currentTime = 0;
+            audioElement.play();
+            playingStatusElement.innerHTML = 'Playing Status: Playing';
+          }, delay);
+        }
+      };
+
+      const updateCountdown = (delay) => {
+        const countdownInterval = setInterval(() => {
+          const remainingTime =
+            (delay - (Date.now() - (new Date().getTime() - serverTimeOffset))) /
+            1000;
+          if (remainingTime <= 0) {
+            clearInterval(countdownInterval);
+            countdownElement.innerHTML = 'Countdown to Play: 0s';
+          } else {
+            countdownElement.innerHTML = `Countdown to Play: ${remainingTime.toFixed(
+              1
+            )}s`;
+          }
+        }, 100);
+      };
+
+      function startSync() {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: 'startSync' }));
+          console.log('Sent start sync request to server');
+        } else {
+          console.log('WebSocket is not open');
+        }
+      }
+    </script>
+
+    <!-- Example audio track for synchronization -->
+    <audio
+      id="track"
+      src="Los_Lonely_Boys2013-11-15s01t08.mp3"
+      preload="auto"
+    ></audio>
+  </body>
+</html>
