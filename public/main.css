@@ -52,3 +52,19 @@ p {
     font-size: 14px;
   }
 }
+
+@keyframes flash {
+  0% {
+    background-color: #007bff;
+  }
+  50% {
+    background-color: #0056b3;
+  }
+  100% {
+    background-color: #007bff;
+  }
+}
+
+button.flash {
+  animation: flash 1s infinite;
+}

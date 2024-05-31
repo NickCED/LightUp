@@ -1,6 +1,14 @@
 const fs = require('fs');
 const https = require('https');
 const WebSocket = require('ws');
+const ntpClient = require('ntp-client');
+const { toZonedTime, fromZonedTime } = require('date-fns-tz');
+const { v4: uuidv4 } = require('uuid'); // Import UUID library
+
+// Define the timezone for Louisville, KY
+const timezone = 'America/Kentucky/Louisville';
+const desiredStartHours = 16;
+const desiredStartMinutes = 39;
 
 const options = {
   cert: fs.readFileSync(
@@ -12,50 +20,89 @@ const options = {
 };
 
 const server = https.createServer(options);
-
 const wss = new WebSocket.Server({ server });
 
-// Define the start time (e.g., 11:00 am)
-const startTime = new Date();
-startTime.setHours(11, 0, 0, 0);
+// Function to fetch current NTP time
+function getNtpTime(callback) {
+  ntpClient.getNetworkTime('pool.ntp.org', 123, (err, date) => {
+    if (err) {
+      console.error(err);
+      return;
+    }
+    callback(date);
+  });
+}
+
+// Function to calculate the local start time based on the desired hours and minutes
+function getLocalStartTime(hours, minutes, callback) {
+  getNtpTime((ntpTime) => {
+    const localNtpTime = toZonedTime(ntpTime, timezone);
+    const startTime = new Date(localNtpTime);
+    startTime.setHours(hours, minutes, 0, 0);
+
+    const startTimeUtc = fromZonedTime(startTime, timezone);
+    callback(startTimeUtc, ntpTime);
+  });
+}
+
+// Function to broadcast a message to all connected clients
+function broadcast(data) {
+  const message = JSON.stringify(data);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
 
 wss.on('connection', (ws) => {
-  console.log('New client connected');
-
-  // Send the start time and current server time to the newly connected client
-  ws.send(
-    JSON.stringify({
-      action: 'startTime',
-      startTime: startTime.getTime(),
-      serverTime: Date.now(),
-    })
-  );
-
+  console.log('Client connected');
+  let clientID;
   ws.on('message', (message) => {
-    console.log(`Received: ${message}`);
+    const parsedMessage = JSON.parse(message);
+
+    if (parsedMessage.action === 'reqClientID') {
+      clientID = uuidv4();
+      ws.send(
+        JSON.stringify({
+          action: 'setClientID',
+          clientID: clientID,
+        })
+      );
+    }
+
+    if (parsedMessage.action === 'testLatency') {
+      const clientTime = parsedMessage.clientTime;
+      const serverTime = performance.now();
+      const latency = serverTime - clientTime;
+
+      // Send the start time and current server time to the client
+      getLocalStartTime(
+        desiredStartHours,
+        desiredStartMinutes,
+        (startTime, ntpTime) => {
+          ws.send(
+            JSON.stringify({
+              action: 'startTime',
+              startTime: startTime.getTime(),
+              serverTime: ntpTime.getTime(),
+              estimatedLatency: latency,
+            })
+          );
+        }
+      );
+    }
   });
 
   ws.on('close', () => {
-    console.log('Client disconnected');
+    if (!clientID) return;
+    console.log(`Client disconnected: ${clientID}`);
   });
 
   ws.on('error', (error) => {
-    console.error(`WebSocket error: ${error}`);
+    if (!clientID) return;
+    console.error(`WebSocket error for client ${clientID}: ${error}`);
   });
-
-  // Send the current server time to all connected clients every second
-  const interval = setInterval(() => {
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(
-          JSON.stringify({
-            action: 'serverTime',
-            serverTime: Date.now(),
-          })
-        );
-      }
-    });
-  }, 1000);
 });
 
 // Listen on port 443

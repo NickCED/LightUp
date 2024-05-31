@@ -5,14 +5,22 @@
     <link rel="stylesheet" href="main.css" />
   </head>
   <body>
-    <button onclick="startSync()">Start Sync</button>
-    <button onclick="toggleMute()">Mute</button>
+    <button id="startSync" ">Start Sync</button>
+    <button id="mute" onclick="toggleMute()">Mute?</button>
+    <button onclick="playSong()">Test Song</button>
     <p id="status">Waiting for WS Connection...</p>
     <p id="startTime">Desired Start Time: Not Set</p>
     <p id="countdown">Countdown to Play: Not Started</p>
     <p id="playingStatus">Playing Status: Not Playing</p>
-
+    <audio
+      id="track"
+      src="Los_Lonely_Boys2013-11-15s01t08.mp3"
+      preload="auto"
+    ></audio>
     <script>
+      let clientID = localStorage.getItem('clientID')|| null;
+      const startSyncBtn = document.getElementById('startSync');
+      const muteBtn = document.getElementById('mute');
       const statusElement = document.getElementById('status');
       const startTimeElement = document.getElementById('startTime');
       const countdownElement = document.getElementById('countdown');
@@ -21,45 +29,120 @@
       const ws = new WebSocket('wss://dev.nicholasjosephsmith.com');
       let startTime;
       let serverTimeOffset;
+      let userInteraction = false;
+      let estimatedLatency = 0; // Initialize the latency variable
+
+      document.addEventListener('click', () => {
+        userInteraction = true;
+        startSyncBtn.classList.remove('flash');
+      });
+      startSyncBtn.addEventListener('click', () => {
+        userInteraction = true;
+        startSyncBtn.classList.remove('flash');
+        synchronizePlayback();
+      });
+
+      function formatDate(date) {
+        const options = {
+          weekday: 'short', // 'long' for full name, 'short' for short name
+          year: 'numeric',
+          month: 'short', // 'long' for full name, 'short' for short name
+          day: 'numeric',
+          hour: 'numeric',
+          minute: 'numeric',
+          second: 'numeric',
+          hour12: true, // false for 24-hour format, true for 12-hour format
+        };
+        return date.toLocaleString('en-US', options);
+      }
 
       function toggleMute() {
         audioElement.muted = !audioElement.muted;
-        playingStatusElement.innerHTML = audioElement.muted
-          ? 'Playing Status: Muted'
+        muteBtn.innerHTML = audioElement.muted ? 'Unmute?' : 'Mute?';
+      }
+
+      function playSong() {
+        audioElement.paused ? audioElement.play() : audioElement.pause();
+
+        playingStatusElement.innerHTML = audioElement.paused
+          ? 'Playing Status: Paused'
           : 'Playing Status: Playing';
       }
 
+
+      const testLatency = () => {
+        const clientTime = performance.now();
+        ws.send(JSON.stringify({ action: 'testLatency', clientTime: clientTime }));
+      };
+
       ws.onopen = () => {
         console.log('Connected to the server');
+        if(clientID === null){
+         ws.send(JSON.stringify({ action: 'reqClientID' }));
+        } 
         statusElement.innerHTML = 'Status: Connected to Server';
+        if(clientID !== null) testLatency();
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log(data);
         if (data.action === 'startTime') {
           startTime = new Date(data.startTime);
-          startTimeElement.innerHTML = `Desired Start Time: ${startTime}`;
+          startTimeFormated = formatDate(startTime);
+          startTimeElement.innerHTML = `Desired Start Time: ${startTimeFormated}`;
           const clientTime = Date.now();
-          serverTimeOffset = clientTime - data.serverTime;
+          serverTimeOffset =
+            data.serverTime - clientTime - data.estimatedLatency; // Adjust for latency
+          estimatedLatency = data.estimatedLatency; // Store the estimated latency
+          startTimeConverted = startTime.getTime();
+          console.table({
+            clientTime,
+            serverTime: data.serverTime,
+            startTime,
+            startTimeConverted,
+            serverTimeOffset,
+            estimatedLatency,
+          });
           synchronizePlayback();
+        }
+        if(data.action === 'setClientID'){
+          console.log('setting clientID to : ' + data.clientID);
+          clientID = data.clientID;
+          localStorage.setItem('clientID', clientID);
+          testLatency();
         }
       };
 
       const synchronizePlayback = () => {
         const now = new Date();
-        const adjustedNow = new Date(now.getTime() - serverTimeOffset);
+        const adjustedNow = new Date(
+          now.getTime() + serverTimeOffset + estimatedLatency
+        ); // Adjust for latency
         if (startTime <= adjustedNow) {
+          console.log('Im late  ' + (adjustedNow - startTime) / 1000 / 60);
+          if (!userInteraction) {
+            startSyncBtn.classList.add('flash');
+            return;
+          }
           const elapsedTime = (adjustedNow - startTime) / 1000;
           audioElement.currentTime = elapsedTime;
           audioElement.play();
+          countdownElement.innerHTML = 'Countdown to Play: LIVE';
           playingStatusElement.innerHTML = 'Playing Status: Playing';
         } else {
+          if (!userInteraction) {
+            startSyncBtn.classList.add('flash');
+            return;
+          }
+          if (!startTime) return;
           const delay = startTime - adjustedNow;
           playingStatusElement.innerHTML = 'Playing Status: Waiting to Play';
           updateCountdown(delay);
           setTimeout(() => {
             audioElement.currentTime = 0;
             audioElement.play();
+            countdownElement.innerHTML = 'Countdown to Play: LIVE';
             playingStatusElement.innerHTML = 'Playing Status: Playing';
           }, delay);
         }
@@ -68,8 +151,9 @@
       const updateCountdown = (delay) => {
         const countdownInterval = setInterval(() => {
           const remainingTime =
-            (delay - (Date.now() - (new Date().getTime() - serverTimeOffset))) /
-            1000;
+            (startTime.getTime() -
+              (Date.now() + serverTimeOffset + estimatedLatency)) /
+            1000; // Adjust for latency
           if (remainingTime <= 0) {
             clearInterval(countdownInterval);
             countdownElement.innerHTML = 'Countdown to Play: 0s';
@@ -80,22 +164,8 @@
           }
         }, 100);
       };
-
-      function startSync() {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ action: 'startSync' }));
-          console.log('Sent start sync request to server');
-        } else {
-          console.log('WebSocket is not open');
-        }
-      }
     </script>
 
     <!-- Example audio track for synchronization -->
-    <audio
-      id="track"
-      src="Los_Lonely_Boys2013-11-15s01t08.mp3"
-      preload="auto"
-    ></audio>
   </body>
 </html>
